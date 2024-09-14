@@ -1,14 +1,11 @@
-import os
-import time
 import streamlit as st
+import os
 from dotenv import load_dotenv
-import google.generativeai as gen_ai
-from PIL import Image
+import google.generativeai as genai
 
-# Load environment variables
+# Load environment variables from .env file
 load_dotenv()
 
-# Configure Streamlit page settings
 st.set_page_config(
     page_title="Healthcare ChatBot - Powered by Gemini 1.5 Pro!",
     page_icon=":hospital:",
@@ -27,23 +24,16 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+# Get the API key from the environment variable
+api_key = os.getenv("GEMINI_API_KEY")
 
-# Set up Google Gemini 1.5 Pro model
-gen_ai.configure(api_key=GOOGLE_API_KEY)
-model = gen_ai.GenerativeModel('gemini-1.5-pro')
-vision_model = gen_ai.GenerativeModel('vision-x-model')
+# Check if the API key is available
+if not api_key:
+    st.error("GEMINI_API_KEY not found in .env file. Please add it and restart the app.")
+    st.stop()
 
-# Function to translate roles between Gemini-1.5 Pro and Streamlit terminology
-def translate_role_for_streamlit(user_role):
-    return "assistant" if user_role == "model" else user_role
-
-# Initialize chat session and other session state variables
-if "chat_session" not in st.session_state:
-    st.session_state.chat_session = model.start_chat(history=[])
-    st.session_state.user_prompts = []
-    st.session_state.greeting_done = False
-    st.session_state.questions_asked = False
+# Configure the Google AI SDK
+genai.configure(api_key=api_key)
 
 # Main content
 st.markdown("<h1 style='text-align: center;'>🏥 Healthcare ChatBot!</h1>", unsafe_allow_html=True)
@@ -56,55 +46,48 @@ with col1:
 with col2:
     st.warning("📄 This data can help in identifying trends, and making more informed decisions about treatment plans.")
     st.error("💡 Receive tailored health recommendations based on your symptoms, including preventive measures and treatments.")
-
-# Chat interface
-chat_placeholder = st.empty()
-
-# Initial greeting and questions
-if not st.session_state.greeting_done:
-    with chat_placeholder.chat_message("assistant"):
-        st.write("Hello! I'm your Healthcare ChatBot. How can I assist you today?")
-    time.sleep(2)
-    st.session_state.greeting_done = True
-
-if st.session_state.greeting_done and not st.session_state.questions_asked:
-    questions = [
-        "What is your current health condition?",
-        "Do you have any specific health concerns or symptoms?",
-        "Are you currently taking any medications?",
-        "Do you have any chronic diseases or conditions?",
-        "Have you had any recent changes in your health or lifestyle?"
-    ]
     
-    for question in questions:
-        with chat_placeholder.chat_message("assistant"):
-            st.write(question)
-        user_response = st.chat_input(f"Your answer to: {question}")
-        if user_response:
-            with chat_placeholder.chat_message("user"):
-                st.write(user_response)
-            st.session_state.user_prompts.append(f"Q: {question}\nA: {user_response}")
-        else:
-            break
-    
-    st.session_state.questions_asked = True
+# Create the model
+generation_config = {
+    "temperature": 1,
+    "top_p": 0.95,
+    "top_k": 64,
+    "max_output_tokens": 8192,
+    "response_mime_type": "text/plain",
+}
 
-# Regular chat interaction
-if st.session_state.greeting_done and st.session_state.questions_asked:
-    for message in st.session_state.chat_session.history:
-        with chat_placeholder.chat_message(translate_role_for_streamlit(message.role)):
-            st.markdown(message.parts[0].text)
+model = genai.GenerativeModel(
+    model_name="gemini-1.5-pro",
+    generation_config=generation_config,
+    system_instruction="First when the user says that he is suffering from some health issues. You should reply the user in this format:\n1. Reply the causes\n2. Tell the user why it is caused\n3. Cross reference with some databases and suggest potential diagnosis.\n4. Provide recommendations or next steps for seeking medical care.\n\nYou should not reply that you are an AI and cannot assist on real-time problems and also if the user asks something beyond healthcare or human well-being you should say that you don't have info beyond healthcare.",
+)
 
-    user_prompt = st.chat_input("Enter your health-related question here...")
-    if user_prompt:
-        with chat_placeholder.chat_message("user"):
-            st.markdown(user_prompt)
-        st.session_state.user_prompts.append(user_prompt)
+# Initialize chat history
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-        # Display a spinner in the center of the page to indicate prompt generation
-        with st.spinner("Generating response..."):
-            gemini_response = st.session_state.chat_session.send_message(user_prompt)
-            time.sleep(2)  # Simulate some processing time (optional)
-        
-        with chat_placeholder.chat_message("assistant"):
-            st.markdown(gemini_response.text)
+# Display chat messages from history on app rerun
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+# React to user input
+if prompt := st.chat_input("What is your question?"):
+    # Display user message in chat message container
+    st.chat_message("user").markdown(prompt)
+    # Add user message to chat history
+    st.session_state.messages.append({"role": "user", "content": prompt})
+
+    # Initialize chat session if it doesn't exist
+    if "chat_session" not in st.session_state:
+        st.session_state.chat_session = model.start_chat(history=[])
+
+    # Generate response with a spinner
+    with st.spinner("Processing..."):
+        response = st.session_state.chat_session.send_message(prompt)
+
+    # Display assistant response in chat message container
+    with st.chat_message("assistant"):
+        st.markdown(response.text)
+    # Add assistant response to chat history
+    st.session_state.messages.append({"role": "assistant", "content": response.text})
